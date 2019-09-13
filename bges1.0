@@ -1,0 +1,357 @@
+import nmap
+import time
+import re
+import datetime
+from func_timeout import func_timeout, FunctionTimedOut
+
+
+
+#Setup initial scanning object for nmap to do its work
+scanner = nmap.PortScanner()
+
+#Ip seen list is all ip's that go to whitelist.txt.  File overwritten with each scan.
+ip_seen = []
+#simple regex to match ip address
+pattern = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
+
+#Main menu here - still functionality to come?
+def main():
+    def intro():
+        print("bges version 1.0")
+        print("Nmap Version: ", scanner.nmap_version())
+        print()
+        print("       <--------BIG GIANT EYEBALL SCANNER------>")
+        print("""
+                        ___.-------.___
+                    _.-' ___.--;--.___ `-._
+                 .-' _.-'  /  .+.  \  `-._ `-.
+               .' .-'      |-|-o-|-|      `-. `.
+              (_ <O__      \  `+'  /      __O> _)
+                `--._``-..__`._|_.'__..-''_.--'
+                      ``--._________.--''
+      """)
+        print()
+        time.sleep(.5)
+        print("""
+            The above eyeball uses nmap to peer into your network.
+            The tool will utilize a simple nmap scan to lists active hosts
+            on the network.  Once an active host list is established, it is
+            monitored for additional hosts.""")
+        print("""
+
+    These scans are:
+
+                    1: Scan network create baseline and monitor (subnet)
+                    2. Syn/Ack scan for single host
+                    3. OS Detection Scan for single host""")
+
+        time.sleep(.5)
+        print()
+        print("Here are some sample formats: ")
+        time.sleep(.5)
+        print("""
+
+    Example Format Single IP: 192.168.0.1\n    
+    Example Format Entire Subnet: 192.168.0.1/24\n
+    Remember that /24 is a subnet specifer, where 24 is typical for most home
+    networks, enterprise will utilize different schemes.\n""")
+
+        cont = input("Please press Enter to continue: ")
+        if cont == "":
+            get_ip()
+        else:
+            intro()
+    #Function gets IP from user, validates regex, calls scan function with IP given
+    def get_ip():
+        ip_addr = input("Please enter the IP address to scan (if opt 1 include /CIDR): ")
+        validate = re.match(pattern, ip_addr)
+        if validate:
+            time.sleep(.5)
+            print("The IP you entered is {}".format(ip_addr))
+            time.sleep(.5)
+            change = input("Is this correct? type 'y' for yes or 'n' to correct: ")
+            while change != 'y':
+                ip_addr = input("Please enter the IP address to scan format x.x.x.x: ")
+                validate = re.match(pattern, ip_addr)
+                if validate:
+                    time.sleep(.5)
+                    print("The IP you entered is {}".format(ip_addr))
+                    time.sleep(.5)
+                    change = input("Is this correct? type 'y' for yes or 'n' to correct: ")
+            time.sleep(.5)
+            print()
+            print("Good, we'll be scanning {}".format(ip_addr))
+            scans(ip_addr)
+        else:
+            print("Please enter ip address in format of x.x.x.x")
+            get_ip()
+    #Sets up Menu for desired scan and options.
+    def scans(ip_addr):
+        print("""\n
+
+        Please enter the type of scan you'd like to run:
+
+                At any time to stop the scan and restart the
+                program, you may press "ctrl + c".
+
+                1)Simple looping probe scan
+
+                    This scan will find all live hosts on the network
+                    and list them by IP into a txt file of the current
+                    working directory.  When a new IP is seen on the network
+                    the scan will append the new ip to an additional file
+                    with a date and time stamp. Next, the tool will run
+                    a more thorough scan on the IP to attempt and identify
+                    the device. The detailed information will be outputted
+                    into a file in the same directory.
+                    At any time to stop the scan and restart the
+                    program, you may press "ctrl + c".
+
+                2)SYN TCP SYN port stealth scan (Single host only)
+                3)OS Detection (Single host only)\n""")
+
+        time.sleep(1)
+        selection = input("Please select your option (1, 2, or 3): ")
+        print()
+        print("You have selected option {}".format(selection))
+
+
+        if selection == "1":
+            print()
+            print("Now, please enter the amount of time between scans.")
+            print("Options may be from 1 to 60 seconds.")
+            print("If you want to check for new IP's every 45 seconds, enter 45")
+            print("If you desire a more aggressive posture, enter a lower number.")
+            print()
+            time.sleep(1)
+            
+            scan_time = ""
+            while scan_time == "":
+                try:
+                    scan_time = int(input("Enter the amount of time between scans: "))
+                except ValueError:
+                    print("You must enter a number between 1 and 60.")
+            #Scan time needs to be inbetween 1 and 60 for now to keep it simple. Can add option for minutes here?
+            if scan_time >= 1 or scan_time <= 60:
+                looping_scan(ip_addr, scan_time)
+
+        #Options in progress
+        elif selection == "2":
+            print()
+            time.sleep(1)
+            print("Conducting TCP/SYN Scan...")
+            stealth(ip_addr)
+        elif selection == "3":
+            print()
+            time.sleep(1)
+            print("Fingerprinting scan....")
+            os(ip_addr)
+            
+        else:
+            print()
+            print("You must enter a 1, 2 or 3.".upper())
+            time.sleep(1)
+            print("Rediverting....")
+            time.sleep(1)
+            scans(ip_addr)
+        
+    #Where the magic happens.  Writes to white list of up hosts,
+    #Writes file for new IP's seen,
+    #If new host comes online, redirects to the deep_scan function
+    #
+    def looping_scan(ip_addr, scan_time):
+        try:   
+            while True:
+                seen = False
+                new_ip = []
+                print()
+                print("Initial Scan")
+                print("------------")
+                print("Scanning: " + ip_addr)
+                #had trouble with args here.  Hosts and arguments worked.
+                #can also do inform of scanner.scan(ip, '1-1024', '-sV')
+                scanner.scan(hosts=ip_addr, arguments='-sn')
+                #print(scanner.scaninfo())
+                #create var to store all hosts
+                hosts = scanner.all_hosts()
+                now = datetime.datetime.now()
+                print("Current date and time: ")
+                print(now.strftime("%Y-%m-%d %H:%M:%S"))
+                print("Hosts up on network:")
+                print()
+                #loop through hosts to make ip list
+                for i in hosts:
+                    if i not in ip_seen:
+                        ip_seen.append(i)
+                        ip_seen.sort()
+                    print(i)
+                with open("whitelist.txt", 'w') as wl:
+                    wl.write("Hosts up on network\n")
+                    wl.write(now.strftime("%Y-%m-%d %H:%M:%S\n"))
+                    print()
+                    for line in ip_seen:       
+                        wl.write(line + '\n')
+                print()
+                print("Initial Scan Complete.")
+                print()
+                print("Sleeping for {} seconds".format(scan_time))
+                print()                   
+                seconds = scan_time
+                counter = 0
+                while seconds > 0:
+                    print(seconds, end='' + "...")
+                    if counter == 10:
+                        print()
+                    time.sleep(1)
+                    seconds = seconds - 1
+                    counter+=1
+                print()
+                print("Second scanning of: " + ip_addr)
+                
+                scanner.scan(hosts=ip_addr, arguments='-sn')
+                hosts2 = scanner.all_hosts()
+                
+                for i in hosts2:
+                    if i not in ip_seen:
+                        seen = True
+                        new_ip.append(i)
+                        new_ip.sort()
+                        print("A new ip " + i + " has been identified on the network")
+                        print("Completing a thorough scan of the new device.")
+                        time.sleep(1)
+                        print("Redirecting scan to output file scan_dict.txt.")
+                        time.sleep(1)
+                        deep_scan(i)
+                        #focused scan on new ip
+                if seen == True:
+                    with open("newip.txt", 'a') as newip:
+                        newip.write("New IP on network: \n")
+                        newip.write(now.strftime("%Y-%m-%d %H:%M:%S\n"))
+                        for line in new_ip:
+                            newip.write(line + '\n')
+                else:
+                    print()
+                    print("No new IP's found.")
+                    print()
+        except KeyboardInterrupt:
+            print("Restarting...")
+            time.sleep(1)
+            get_ip()
+
+                #create initial txt file of all ip's seen on network
+
+                #create set (unsorted) to compare for changes
+                #lines_seen = set(open("whitelist.txt").readlines())
+
+
+            
+    #Semi-complex function involving a targeted scan of the new host discovered
+    #The iterdict function is a recursive function that iterates over the 
+    #dictionary object presented from the deep scan.  Once the scan is complete
+    #the scan information will be written to scan_dict.txt file for log purposes.
+    def deep_scan(ip_from_loop):
+        timeout_counter = 0
+        now = datetime.datetime.now()
+        time.sleep(1)
+        print("Deep scanning " + ip_from_loop)
+        time.sleep(1)
+        #offloads is deep scan function, gets passed to try as a function timeout in case hangs.
+        def offload():
+            scan_dict = scanner.scan(ip_from_loop, '1-1024', '-O -sV')
+            return scan_dict
+        try:
+            #off_load_return_value is the return of the scan, gets passed to interdict as dictionary
+            #timeout is set for 60 seconds right now.  Can add third optional argument for args to function.
+            #ex. would be off_load_return_value = func_timeout(60, offload, args=(arg1, arg2))
+            off_load_return_value = func_timeout(60, offload)
+        except FunctionTimedOut:
+            print("Timed out, trying again...")
+            timeout_counter+=1
+            if timeout_counter < 3:
+                deep_scan(ip_from_loop)
+            else:
+                print()
+                print("Timed out - Restarting menu, try focused scan with option 2 or 3 for this IP.")
+                print("IP is logged in newip.txt")
+                print()
+                get_ip()
+        except Exception as e:
+            #will return any exceptions from the called function
+            pass
+        
+        #This function below recursively iterates over the dictionary output from the scan.
+        def iterdict(d):
+            for k,v in d.items():        
+                if isinstance(v, dict):
+                    iterdict(v)
+                else:            
+                    print (k,":",v)
+                    with open('scan_dict.txt', 'a') as dl:
+                        dl.write("\n")
+                        dl.write(now.strftime("%Y-%m-%d %H:%M:%S\n"))
+                        dl.write("\n")
+                        dl.write(str(k))
+                        dl.write(" : ")
+                        dl.write(str(v))
+                        
+
+        iterdict(off_load_return_value)    
+
+    def stealth(ip_addr):
+        print("Conducting scan of " + ip_addr)
+        time.sleep(1)
+        scan_dict = scanner.scan(ip_addr, '1-1024', '-sS')
+        print("Complete.")
+        print()
+        time.sleep(1)
+        print("OUTPUT")
+        print("------")
+        time.sleep(1)
+        print()
+        def iterdict(d):
+            for k,v in d.items():        
+                if isinstance(v, dict):
+                    iterdict(v)
+                else:            
+                    print (k,":",v)
+        iterdict(scan_dict)
+        print()
+        scanner.scan(ip_addr, '1-1024', '-sS')
+        print("Open Ports: ")
+        print(scanner[ip_addr]['tcp'].keys())
+        print()
+        time.sleep(1)
+        print("Complete...Redirecting to input field.")        
+        time.sleep(1)
+        get_ip()
+    
+    def os(ip_addr):
+        print("Fingerprinting " + ip_addr)
+        time.sleep(1)
+        scan_dict = scanner.scan(ip_addr, '1-1024', '-O')
+        print("Complete.")
+        print()
+        time.sleep(1)
+        print("OUTPUT")
+        print("------")
+        time.sleep(1)
+        print()
+        def iterdict(d):
+            for k,v in d.items():        
+                if isinstance(v, dict):
+                    iterdict(v)
+                else:            
+                    print (k,":",v)
+        iterdict(scan_dict)
+        print()
+        scanner.scan(ip_addr, '1-1024', '-sS')
+        print("Open Ports: ")
+        print(scanner[ip_addr]['tcp'].keys())
+        print()
+        time.sleep(1)
+        print("Complete...Redirecting to input field.")        
+        time.sleep(1)
+        get_ip()
+    intro() 
+
+main()
